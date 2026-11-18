@@ -10,6 +10,14 @@ Python 3.8 or later with tkinter (included in the python.org installers; on Debi
 python3 battery_sim.py
 ```
 
+## Files
+
+| File | What it does |
+|---|---|
+| `battery_model.py` | The calculator: drain and charge rates, time left, Low Power Mode rules and the charge history. Plain Python, no GUI. |
+| `battery_sim.py` | The tkinter GUI: draws the phone, the controls and the chart, and asks `battery_model` for every number. |
+| `test_battery_model.py` | Tests for the calculator. Run them with `python3 -m unittest`. |
+
 ## What you can do
 
 - Press **Start** (or the space bar) to run the clock. The phone's lock screen shows the time, a battery ring and the time left.

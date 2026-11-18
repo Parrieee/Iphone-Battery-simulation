@@ -1,4 +1,6 @@
-"""Battery Sim: an iPhone battery simulator built with tkinter.
+"""Battery Sim: the tkinter GUI for the iPhone battery simulator.
+
+The calculations live in battery_model.py; this file only draws and handles input.
 
 Run it with:  python3 battery_sim.py
 
@@ -9,6 +11,8 @@ Colours, type and spacing follow the Battery Sim design system.
 
 import tkinter as tk
 import tkinter.font as tkfont
+
+from battery_model import Battery, LOW_POWER_LEVEL, format_duration, state_for
 
 # ---------------------------------------------------------------------------
 # Design tokens (from the Battery Sim design system's tokens.json)
@@ -29,8 +33,6 @@ WHITE = "#ffffff"
 SPACE_1, SPACE_2, SPACE_4, SPACE_6 = 4, 8, 16, 24
 RADIUS_SM, RADIUS_MD = 6, 12
 
-LOW_POWER_LEVEL = 20
-CRITICAL_LEVEL = 10
 TICK_MS = 100  # the simulation advances ten times a second
 
 
@@ -70,87 +72,12 @@ def rounded_rect(canvas, x1, y1, x2, y2, r, **kw):
     return canvas.create_polygon(pts, smooth=True, splinesteps=16, **kw)
 
 
-def state_for(level):
-    if level <= CRITICAL_LEVEL:
-        return "critical"
-    if level <= LOW_POWER_LEVEL:
-        return "low"
-    return "healthy"
-
-
-def format_duration(hours):
-    if hours is None or hours == float("inf"):
-        return "—"
-    minutes = int(round(hours * 60))
-    h, m = divmod(minutes, 60)
-    if h == 0:
-        return "%d min" % m
-    return "%d h %02d min" % (h, m)
-
-
 def pick_font(root, candidates, fallback):
     available = set(tkfont.families(root))
     for name in candidates:
         if name in available:
             return name
     return fallback
-
-
-# ---------------------------------------------------------------------------
-# The battery model
-# ---------------------------------------------------------------------------
-class Battery:
-    """A simple battery model. Rates are in percent per hour."""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.level = 100.0
-        self.sim_hours = 0.0
-        self.history = [(0.0, 100.0)]
-        self.charging_paused_hot = False
-
-    def drain_rate(self, brightness, apps, temperature, health, low_power):
-        if self.level <= 0:
-            return 0.0
-        rate = 1.0                      # standby: radios, clock, sensors
-        rate += 2.0                     # screen on
-        rate += 4.0 * brightness / 100  # backlight
-        rate += 0.35 * apps             # background apps refreshing
-        if temperature < 10:            # cold cells deliver less charge
-            rate += (10 - temperature) * 0.25
-        elif temperature > 35:          # heat wastes energy and ages the cell
-            rate += (temperature - 35) * 0.3
-        if low_power:
-            rate *= 0.7
-        return rate * 100.0 / health    # a worn battery holds less, so drains faster
-
-    def charge_rate(self, temperature):
-        """Fast up to 80%, slower to 95%, then a trickle. Paused when too hot."""
-        self.charging_paused_hot = temperature > 40
-        if self.charging_paused_hot:
-            return 0.0
-        if self.level < 80:
-            return 60.0
-        if self.level < 95:
-            return 20.0
-        return 8.0
-
-    def step(self, hours, drain, charging, temperature):
-        if charging:
-            net = self.charge_rate(temperature) - drain * 0.5
-        else:
-            self.charging_paused_hot = False
-            net = -drain
-        self.level = max(0.0, min(100.0, self.level + net * hours))
-        self.sim_hours += hours
-        last_t = self.history[-1][0]
-        if self.sim_hours - last_t >= 1 / 60.0:   # one point per simulated minute
-            self.history.append((self.sim_hours, self.level))
-            if len(self.history) > 3000:
-                self.history = self.history[::2]
-        return net
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +182,6 @@ class BatterySimApp:
 
         self.battery = Battery()
         self.running = False
-        self.low_power_auto_done = False
 
         self.brightness = tk.IntVar(value=70)
         self.apps = tk.IntVar(value=5)
@@ -264,8 +190,7 @@ class BatterySimApp:
         self.speed = tk.IntVar(value=30)  # simulated minutes per real second
         self.low_power = tk.BooleanVar(value=False)
         self.charging = tk.BooleanVar(value=False)
-        self.net_rate = 0.0
-
+        
         self._build()
         root.bind("<space>", lambda e: self.toggle_run())
         self.render()
@@ -336,7 +261,7 @@ class BatterySimApp:
             tk.Checkbutton(controls, text=text, variable=var, bg=SURFACE_RAISED, fg=INK,
                            activebackground=SURFACE_RAISED, selectcolor=SURFACE_RAISED,
                            highlightthickness=0, bd=0, font=f["control"], anchor="w",
-                           command=self.render).pack(fill="x")
+                           command=self.on_toggle).pack(fill="x")
 
         chart_card = Card(lower, "Charge over time", "Simulated hours since start", fonts=f)
         chart_card.grid(row=0, column=1, sticky="nsew", padx=(SPACE_6, 0))
@@ -354,33 +279,27 @@ class BatterySimApp:
         self.running = not self.running
         self.render()
 
+    def on_toggle(self):
+        self.battery.low_power = self.low_power.get()
+        self.render()
+
     def reset(self):
         self.running = False
         self.battery.reset()
         self.low_power.set(False)
-        self.low_power_auto_done = False
         self.render()
 
     def current_drain(self):
         return self.battery.drain_rate(self.brightness.get(), self.apps.get(),
-                                       self.temperature.get(), self.health.get(),
-                                       self.low_power.get())
+                                       self.temperature.get(), self.health.get())
 
     def tick(self):
         if self.running:
             hours = self.speed.get() / 60.0 * TICK_MS / 1000.0
-            self.net_rate = self.battery.step(hours, self.current_drain(),
-                                              self.charging.get(), self.temperature.get())
-            level = self.battery.level
-            # iOS offers Low Power Mode at 20% and turns it off again at 80% while charging.
-            if level <= LOW_POWER_LEVEL and not self.low_power_auto_done:
-                self.low_power.set(True)
-                self.low_power_auto_done = True
-            if level >= 80 and self.charging.get() and self.low_power.get():
-                self.low_power.set(False)
-            if level > LOW_POWER_LEVEL + 5:
-                self.low_power_auto_done = False
-            if level <= 0 and not self.charging.get():
+            self.battery.step(hours, self.current_drain(), self.charging.get(),
+                              self.temperature.get())
+            self.low_power.set(self.battery.low_power)
+            if self.battery.is_dead and not self.charging.get():
                 self.running = False
         self.render()
         self.root.after(TICK_MS, self.tick)
@@ -404,17 +323,19 @@ class BatterySimApp:
                      "critical": ("CRITICAL", CHARGE_CRITICAL, WHITE)}[state]
         self.badge.configure(text=badge[0], bg=badge[1], fg=badge[2])
 
+        temperature = self.temperature.get()
+        rate = b.net_rate(drain, charging, temperature)
+        hours = b.hours_left(drain, charging, temperature)
         if charging:
-            rate = b.charge_rate(self.temperature.get()) - drain * 0.5
             if level >= 100:
                 left = "Fully charged"
-            elif rate <= 0:
+            elif hours is None:
                 left = "Not charging"
             else:
-                left = "Full in " + format_duration((100 - level) / rate)
+                left = "Full in " + format_duration(hours)
             self.rate_label.configure(text="Charging at %.1f %%/h" % max(rate, 0))
         else:
-            left = "Phone off" if level <= 0 else format_duration(level / drain if drain else None) + " left"
+            left = "Phone off" if b.is_dead else format_duration(hours) + " left"
             self.rate_label.configure(text="Draining at %.1f %%/h" % drain)
         self.time_left.configure(text=left)
         self.clock_label.configure(text="Simulated time: " + format_duration(b.sim_hours))
