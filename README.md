@@ -16,6 +16,7 @@ python3 battery_sim.py
 |---|---|
 | `battery_model.py` | The calculator: drain and charge rates, time left, Low Power Mode rules and the charge history. Plain Python, no GUI. |
 | `battery_sim.py` | The tkinter GUI: draws the phone, the controls and the chart, and asks `battery_model` for every number. |
+| `week8_practice.py` | The first console version planned in Week 8: asks for capacity, level and current, prints a True/False check for each and the estimated charge time. Run it with `python3 week8_practice.py`. |
 | `test_battery_model.py` | Tests for the calculator. Run them with `python3 -m unittest`. |
 
 ## What you can do
